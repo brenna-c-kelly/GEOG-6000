@@ -1,0 +1,136 @@
+---
+title: "Lab 4"
+author: "Brenna Kelly"
+date: "9/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pkgs <- c("psych", "ggplot2", "dplyr", "AICcmodavg")
+lapply(pkgs, library, character.only = TRUE)
+
+```
+
+## Exercise 1
+
+**Instructions:** In the previous lab, we used the file statedata.csv to examine the relationship between life expectancy and other socio-economic variables for the U.S. states. Using the same data set, now use stepwise regression (step()) to obtain the best model to estimate life expectancy. You will first need to make a new dataframe that excludes the first column of statedata (statedata2 <- statedata[,-1]). 
+
+**1.a.** Build the null model (mod0) and full model (mod1) \
+**1.b.** Use the step() function to perform automatic stepwise model building. Report the R code you used
+
+```{r state a b}
+#Setup
+state <- read.csv("../datafiles/statedata.csv")
+str(state)
+state_2 <- (state[,-1])
+
+
+#Models
+mod_null <- lm(Life.Exp ~ 1, data = state_2)
+mod_full <- lm(Life.Exp ~ ., data = state_2)
+
+step(mod_null, scope = formula(mod_full))
+```
+**1.c.** Describe the final model obtained, together with its AIC score-value and the R2. \
+
+Using a forward approach, the step function reported that the model with the lowest AIC includes murder rate, high school graduation rate, average number of frost days, and population, though the error term for murder is relatively high. **The AIC for this model is -28.16**, and &mdash; as indicated below &mdash; **the R-squared is 0.736**.
+
+```{r state c}
+mod_final <- lm(Life.Exp ~ Murder + HS.Grad + Frost + Population, data = state_2)
+
+summary(mod_final)
+
+plot(mod_final, which = 1, col = c("blue"))
+
+```
+\
+
+Because this model was created automatically, I wanted to explore the residual plot. It looks to me almost like overfitting &mdash; the data spreads slightly up and then down and up again, and the fit line follows this same pattern.
+
+**1.d.** Using the final model you obtain, make a prediction for the life expectancy in Utah in 2009, given an increase in population size to approximately 2 785 000 in 2009, increase in high school graduation (known) to 75% and a change in murder rate to 1.3/100 000. To do this you will need to make a new dataframe. This can be done easily by selecting the appropriate row from statedata (newstate <- statedata[44,]), then adjusting the values directly (newstate[2] <- 2785). Give the new expectancy plus 95% confidence interval \ 
+**1.e.** Do the same for California. 2009 population = 36 962 000; 2009 high school graduation = 68.3%; 2009 murder rate = 5.3/100 000 (figures are approximate)
+
+```{r state predictions}
+
+utah <- state_2[44,]
+utah[1] <- 2785
+utah[6] <- 75
+utah[5] <- 1.3
+
+predict(mod_final, utah, interval = 'confidence')
+
+cali <- state[which(state$State == "CA"),]
+cali <- cali[,-1]
+cali[1] <- 36962
+cali[6] <- 68.3
+cali[5] <- 5.3 
+
+predict(mod_final, cali, interval = 'confidence')
+
+```
+
+The estimated life expectancy for Utah is **73.5 (95% CI [72.8, 74.1])**. \
+The esimated life expectancy for California **is 74.4 (95% CI [72.6, 76.1])**.
+
+## Exercise 2
+
+**Instructions:** The file normtemp.csv contains measurements of body temperature from 130 healthy human subjects, as well as their weight and sex. Use this data to model body temperatures as a function of both weight and sex. You will need to convert the sex variable into a factor in order for R to recognize this as a dummy variable (bodytemp$sex <- factor(bodytemp$sex, labels = c("male", "female"))). You should also center the weight variable by subtracting the mean.
+
+```{r normtemp}
+normtemp = read.csv("../datafiles/normtemp.csv")
+
+#Cleaning
+normtemp$sex <- factor(normtemp$sex, labels = c("male", "female"))
+describe(normtemp$weight) #in kg
+normtemp$weight <- (normtemp$weight) - mean(normtemp$weight)
+normtemp$weight <- (normtemp$weight)/10
+normtemp <- normtemp[,-1]
+```
+**2.a.** Start by testing the correlation between body temperature and weight using Pearson’s correlation coefficient. \
+**2.b.** Build a model including both weight and sex, and give the code you used. \
+**2.c.** Report the goodness-of-fit (F-statistic and associated p-value) and the R2. \
+**2.d.** The model should provide you with three coefficients. Give a very brief interpretation of what each of these mean (see the lecture notes for an example) 
+
+```{r normtemp analysis}
+#Correlation
+cor(normtemp$weight, normtemp$temp) #pearson is the default method
+
+#Model
+summary(mod <- lm(temp ~ weight + sex, data = normtemp))
+
+#Plot
+eq1=function(x){coef(mod)[2]*x+coef(mod)[1]}
+eq2=function(x){coef(mod)[2]*x+coef(mod)[1]+coef(mod)[3]}
+
+t <- ggplot(normtemp, aes(y = temp, x = weight, color = sex)) +
+  geom_point(alpha = 0.6, size = 3) +
+  scale_color_manual(values = c("brown1", "deepskyblue3")) +
+  stat_function(fun = eq1, geom="line", color = "brown1") +
+  stat_function(fun = eq2, geom="line", color = "deepskyblue3") +
+  theme_minimal() +
+  labs(y = "Temperature (F)", x = "Weight (kg)") +
+  ggtitle("Model of Body Temperature by Weight and Sex")
+t
+```
+\
+The residuals look relatively even. The F-statistic is 6.919 (p-value = 0.001) with an R-squared of about 0.10. The coefficient estimates are: 98.11 (intercept, p < 2e-16), 0.25 (weight, p < 0.01), and 0.27 (female sex, p < 0.05). This means that a person of an average weight has a body temperature of 98.11, and for every 10-kg increase in weight, the expected increase in body temperature is 0.25. Relative to males, females have a body temperature of 0.27 degrees higher.
+
+**2.e.** Build a subset model using only weight and then use the anova() function to test whether or not there is a significant improvement in the full model over the subset. Give the F-statistic, the associated p-value and state whether or not you believe the full model to be better.
+\
+```{r model comparison}
+mod_sub <- lm(temp ~ weight, data = normtemp)
+
+anova(mod_sub, mod)
+models <- list(mod_sub, mod)
+```
+With an F-statistic of 4.78 and p-value of 0.03, we reject the null hypothesis that there is not a significant improvement from the subset model. At the 0.05 alpha level, I would conclude that the full model is better. However, because I did not predetermine an alpha level when I conducted this analysis, I would think critically about this decision.
+\
+\
+To feel more comfortable with this choice, I also calculated the AIC for the models (see below). There is a relatively small difference between the AICs, but the full model does have a slightly lower value &mdash; therefore, I would feel comfortable concluding that sex improves the model despite the penalty of including another parameter.
+\
+```{r}
+names <- c("Subset Model", "Full Model")
+aictab(cand.set = models, modnames = names)
+```
