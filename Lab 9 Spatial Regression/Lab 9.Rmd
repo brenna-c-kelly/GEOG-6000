@@ -1,0 +1,187 @@
+---
+title: "Lab 9"
+author: "Brenna Kelly"
+date: "11/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sf)
+library(sp)
+library(spData)
+library(spdep)
+library(ggplot2)
+library(spatialreg)
+library(tmap)
+
+```
+
+**Instructions:** The file usa48_usedcars.shp in directory ‘usedcars’ contains information on tax rates and delivery charges for new cars (tax_charge) in the 48 conterminous U.S. states for the period 1955-1959, as well as the average used car price for 1960 (price_1960). Use this dataset to build a spatial model linking used car prices to the tax and delivery costs. You will need the spdep library.
+* Build a neighborhood function linking the 48 states. You will need to choose one of the set of neighborhood functions available in R. Explain your choice of neighborhood function
+
+```{r nb}
+cars <- st_read("./usedcars/usa48_usedcars.shp", quiet = TRUE)
+cars <- st_set_crs(cars, 5070)
+
+
+#spatial weight matrix
+cars.geom <- st_geometry(cars)
+cars.coords <- st_centroid(cars.geom)
+cars.nbq <- poly2nb(cars, queen = FALSE)
+cars.nbq.q <- poly2nb(cars)
+cars.nb <- tri2nb(cars.coords)
+cars.nb.sph <- graph2nb(soi.graph(cars.nb, cars.coords))
+cars.nb.k4 <- knn2nb(knearneigh(cars.coords, k = 4))
+
+#plot difference between queen's (red) and rook's (green)
+plot(cars.geom, reset = FALSE, main = "Queen's Case vs. Rook's Case")
+plot(cars.nbq.q, cars.coords, add = TRUE, col = rgb(red = 1, green = 0, blue = 0, alpha = 0.5), lwd = 2.5)
+plot(cars.nbq, cars.coords, add = TRUE, col = rgb(red = 0, green = 1, blue = 0, alpha = 0.5), lwd = 2.5)
+
+#difference between sphere of influence (blue) and k-nearest neighbors (purple)
+plot(cars.geom, reset = FALSE, main = "Sphere of Influence vs. K-Nearest Neighbors (4)")
+plot(cars.nb.sph, cars.coords, add = TRUE, rgb(red = 0.11, green = 0.455, blue = 0.81, alpha = 0.7), lwd = 2.5)
+plot(cars.nb.k4, cars.coords, add = TRUE, rgb(red = 0.84, green = .09, blue = 0.87, alpha = 0.4), lwd = 2.5)
+
+#distance function
+cars.nb.k4 <- knn2nb(knearneigh(cars.coords, k = 4))
+dists <- nbdists(cars.nb.k4, cars.coords)
+dists <- unlist(dists)
+max_lnn <- max(dists)
+cars.nb.d = dnearneigh(cars.coords, d1 = 0, d2 = 0.75 * max_lnn)
+
+#distance plot
+plot(cars.geom, reset = FALSE, main = "Distance Function (3-Nearest Neighbors)")
+plot(cars.nb.d, cars.coords, add = TRUE, rgb(red = 0.25, green = .25, blue = 0.9, alpha = 0.3), lwd = 2.5)
+
+```
+**Answer:** I tried most of our methods when choosing a neighborhood structure and ultimately decided to use a distance function.
+
+The boundary methods seemed ill-suited to the odd polygon shapes. Some contiguous boundaries may not be very informative connections. A good example can be seen in Oklahoma, which is connected to New Mexico in both the queen's and rook's cases. The only difference between the two is at the Four Corners. I didn't select either of these methods. On the East Coast, I believe people would be willing to cross multiple borders, and in the West, I think a centroid method may better capture the connections between states.
+
+I did not select sphere of influence or k-nearest neighbors. I think k-nearest neighbors can be advantageous with polygons of different sizes, but I couldn't find a happy medium that I was satisfied with — I wanted more states to be connected in the East, as I expected, but also connect western states that shared boundaries. Sphere of influence seemed too restrictive.
+
+I adjusted the parameters on the distance function for awhile, eventually choosing three nearest neighbors at 75% maximum distance. While the East Coast looks quite busy, I think this more accurately captures what movement we might expect between these states. Connecticuters likely wouldn't have qualms with moving a car to New Jersey, and Rhode Islanders would likely travel to New York. Because the movement of cars is likely related to the locations of people, I would prefer to use population-weighted centroids.
+
+* Build a spatial weight matrix. Use the summary() function to get information about the distribution of links per state and report this
+
+```{r spatial weight}
+cars.nb <- tri2nb(cars.coords)
+dists <- nbdists(cars.nb, cars.coords)
+
+inv_dist <- function(x) {1/(x/1000)}
+
+idw <- lapply(dists, inv_dist)
+
+cars_idw <- nb2listw(cars.nb, glist = idw, style = "B")
+
+summary(cars_idw)
+
+```
+
+* Use the moran.test() or moran.mc() function to test for spatial autocorrelation in the prices of used cars. Report the Moran’s *I* statistic, the z-score and whether or not you can reject the null hypothesis that there is no spatial autocorrelation
+
+```{r autocorrelation}
+
+cars.listw = nb2listw(cars.nb.d)
+
+moran.test(cars$price_1960,
+           listw = cars.listw,
+           alternative = "two.sided",
+           randomisation = TRUE)
+
+```
+**Answer:** We reject the null hypothesis and conclude that there is spatial autocorrelation (z = 11.178, p < 2.2e-16), with a Moran's I is 0.8132.
+
+* Build a simple linear model using the lm() function between the used car prices (dependent or Y variable) and the tax and delivery cost (independent or X variable). Report the coefficients of the model and the R2. Check for autocorrelation in the residuals of the model using the moran.mc() function, and state whether or not this is present
+
+```{r lm}
+
+cars.lm <- lm(price_1960 ~ tax_charge,
+              data = cars)
+
+#summary(cars.lm)
+
+moran.mc(cars.lm$residuals,
+         listw = cars.listw,
+         nsim = 999,
+         alternative = "greater")
+
+```
+**Answer:** The intercept is 1425.75 (p < 2e-16), the coefficient for tax and delivery costs is 0.6872 (p = 0.000294), and our R-squared is 0.2503. Our Monte-Carlo simulation results suggest that there is autocorrelation present in the residuals.
+
+* Use the Lagrange Multiplier test to identify whether to use a spatial error or spatial lag model. Remember that you may need to use the robust version of this test if non-robust results are both significant. Report the *p*-value of each test and give the model choice
+
+```{r lagrange}
+lmt <- lm.LMtests(cars.lm,
+                  cars.listw,
+                  test = c("LMerr", "LMlag"))
+summary(lmt)
+
+lmt_robust <- lm.LMtests(cars.lm,
+                  cars.listw,
+                  test = c("RLMerr", "RLMlag"))
+summary(lmt_robust)
+
+```
+
+**Answer:** Because both were significant, I conducted a robust test. The error model was not significant, so I determined that a spatial lag model should be used.
+
+* Now build a spatial model linking the car prices and the tax/delivery cost, using the model you chose in the previous section (either use the lagsarlm() or errorsarlm() function). Report the following information:
+* If using a spatial lag model: a) coefficients (and their significance); b) the value of Rho (the spatial autoregressive coefficient); c) the AIC value and the AIC value of the linear model without the spatial weight matrix
+
+```{r spatial lag}
+cars.fit1 <- lagsarlm(price_1960 ~ tax_charge,
+                      data = cars,
+                      cars_idw)
+summary(cars.fit1)
+
+```
+
+a. The intercept is 1445.56 (p < 2.2e-16), and the coefficient for tax and delivery charges is 0.66194 (p = 0.0004018).
+b. Rho is -2.7364e-0 — very small and not statistically significant (p = 0.73835). This suggests that the autoregressive spatial component is not very strong.
+c. Without the spatial weight matrix, the AIC is slightly lower at 528.33. With the SWM, the AIC is 530.22.
+
+* Test for remaining autocorrelation in the residuals of the model using the moran.test() or moran.mc() function. Given the value you obtain, state whether you think that the model adequately accounts for autocorrelation.
+
+```{r}
+moran.mc(cars.fit1$residuals,
+         listw = cars.listw,
+         nsim = 999)
+
+moran.test(cars.fit1$residuals,
+           listw = cars.listw,
+           alternative = "two.sided",
+           randomisation = TRUE)
+```
+**Answer:** The Moran's I statistics were both about 0.5627. While this is an improvement from earlier (a difference of about 0.25, down from 0.8132 previously), I suspect that I haven't adequately accounted for autocorrelation in my model.
+
+* Is the coefficient relating tax and delivery to car price significant? If not, give one reason why this may not be the case
+
+**Answer:** Having not reduced my spatial autocorrelation below significance, I wouldn't be confident stating that the tax and delivery cost were significant. I would want to revisit my choices, but also consider the automobile industry at the time. I suspect that tax and delivery was not as important as my results might suggest.
+
+There is still a spatial trend to the residuals in my map, and when I compare it to the price, they seem to be related. My residuals are low where the price is low, and the residuals are high where the price is high.
+
+```{r fun}
+
+cars$res <- cars.fit1$residuals
+
+tm_shape(cars) +
+  tm_fill("res") +
+  tm_borders()
+tm_shape(cars) +
+  tm_fill("price_1960") +
+  tm_borders() +
+
+
+range(cars$price_1960)
+sd(cars$price_1960)
+
+hist(cars$price_1960, breaks = 10, col = "powderblue", border = "white")
+
+```
+
