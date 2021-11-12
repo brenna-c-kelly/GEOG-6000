@@ -1,0 +1,120 @@
+---
+title: "Lab 5"
+author: "Brenna Kelly"
+date: "10/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r data}
+birds <- read.csv("island2.csv")
+trees <- read.csv("tsuga.csv")
+```
+
+### Exercise 1.
+
+**Instructions:** The file *island2.csv* contains information about the presence or absence of a particular species of bird across a set of islands in the Mediterranean sea. The format of the file is given below. Use this file to build a model relating species presence to the island characteristics. As the response (y) variable consists of presence/absences, you should use a binomial model, with the logit link function.
+
+a. The `incidence` variable contains information of presence/absence. Make boxplots of other variables to see which have a relationship with `incidence`. Using this, state which variables appear to be related the presence/absence of the species.
+
+```{r birds a}
+names(birds)
+
+birds$incidence <- factor(birds$incidence,
+                          levels = c(0, 1),
+                          labels = c("Absent", "Present"))
+par(mfrow = c(1, 3))
+boxplot(area ~ incidence,
+        data = birds,
+        ylab = "Area",
+        xlab = "",
+        ylim = c(0, 10),
+        border = "gray75",
+        col = c("slategrey", "goldenrod3"))
+boxplot(quality ~ incidence,
+        data = birds,
+        ylab = "Quality",
+        xlab = "Incidence",
+        ylim = c(0, 10),
+        border = "gray75",
+        col = c("slategrey", "goldenrod3"))
+boxplot(isolation ~ incidence,
+        data = birds,
+        ylab = "Isolation",
+        xlab = "",
+        ylim = c(0, 10),
+        border = "gray75",
+        col = c("slategrey", "goldenrod3"))
+
+```
+
+**Answer:** It seems that larger area and less isolation are related to presence of a species, and higher quality is probably unrelated to presence of a species.  
+
+b. The two main explanatory variables are island area and island isolation. Using the glm() function, build a generalized linear model of the presence of bird species as explained by these variables. Report the code you used. Use the summary() function to obtain the coefficients, their significance and the AIC score.  
+
+```{r birds b}
+summary(birds_glm <- glm(incidence ~ area + isolation,
+                         data = birds,
+                         family = binomial(link = 'logit')))
+```
+
+c. Finally, use the model to predict the probability of presence of the species on a new island with an area of 5 and an isolation distance of 6. You will need to build a new dataframe for this island. You can either modify the approach used in the last exercise or directly make a new dataframe with these variables and values. Use the predict() function to make the prediction. Note that you will need to include a parameter (type='response'), otherwise the predicted values will not be transformed back into a 0-1 scale. Give the predicted value and its standard error (consult the help page for predict.glm() to do this)
+
+```{r birds c}
+new_island <- data.frame("area" = 5, "isolation" = 6)
+
+pred_new_island <- predict.glm(birds_glm,
+                               new_island,
+                               type = 'response',
+                               se.fit = TRUE)
+pred_new_island$fit
+pred_new_island$se.fit
+```
+
+**Answer:** For a place with an `area` of 5 and an `isolation` distance of 6, the predicted `incidence` of birds is 0.788, with a standard error of 0.113.
+
+### Exercise 2
+
+**Instructions:** The file *tsuga.csv* has estimates of the abundance of Hemlock trees from a set of plots in the Smoky Mountain national park (data from Jason Fridley, Syracuse University). The abundance values are in classes from 0 to 10, and these follow a Poisson distribution (discrete values, zero-bounded). Use this data to make a Poisson regression model of the abundance (`cover`), using both distance to stream and elevation as explanatory variables.
+
+a. Give the code you used to build the model.
+b. Using the summary() function, report the coefficients as log-values and their significance and the model AIC
+c. Transform the coefficients to the original (non-log) scale
+d. Give a brief interpretation of the model: Are the explanatory variables useful? What does the sign of the coefficients tell you about the relationship between Hemlock abundance and elevation and/or stream distance.
+
+```{r trees}
+summary(trees_glm <- glm(cover ~ streamdist + elev,
+                 data = trees,
+                 family = poisson(link = "log")))
+
+exp(coef(trees_glm))
+```
+**Answer:** 
+AIC: 3150.2
+The intercept is 5.065 (log: 1.622e+00, p<2e-16), with a stream distance coefficient of 0.999 (log: -8.963e-04, p = 2.15e-14) and an elevation coefficient of 1.000 (log: 8.901e-05, p = 0.115).
+
+**Interpretation:** The expected abundance of trees in an area that is 0 units from a stream and at an elevation of 0 is about 5. With elevation constant, for every unit further from a stream, the amount of tree cover is expected to reduce by about 0.01%. The elevation coefficient is not significant, with almost no expected change in tree cover for a unit increase in elevation. \n
+
+I created a model without elevation and found that, while the AIC score is slightly higher, it is only a difference of 0.5. Given that elevation is not significant, and the addition only slightly reduces the AIC, I would feel comfortable modeling cover without elevation.\n
+
+In the model of cover by distance, I scaled the distance by a factor of 100. This was done to increase interpretability. While I'm not sure what the units are (feet, meters, etc.), I can now say that for every 100 units further from a stream, the percent of cover is expected to reduce by about 8.2%.
+
+```{r trees checking}
+#checking that cover of 5 @ 0 distance sounds right
+stream_dist_sum <- summary(trees$streamdist) #Q1: 56.57
+near_stream <- trees[which(trees$streamdist < 50),]
+mean(near_stream$cover) #5.599
+
+#scaling distance and modeling
+trees$streamdist_scaled <- trees$streamdist/100
+
+summary(trees_glm2 <- glm(cover ~ streamdist_scaled,
+                 data = trees,
+                 family = poisson(link = "log")))
+exp(coef(trees_glm2))
+
+```
+
