@@ -1,0 +1,182 @@
+---
+title: "Lab 7"
+author: "Brenna Kelly"
+date: "10/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(cluster)
+library(maps)
+library(viridis)
+library(fpc)
+library(dplyr)
+library(ggplot2)
+library(dplyr)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(RColorBrewer)
+library(purrr)
+library(gridExtra)
+library(scales)
+library(stats)
+#census_api_key("438e074b766ecf21e23302d37098587fdba05788", install = TRUE)
+```
+
+```{r data}
+boston <- read.csv("boston6k.csv")
+climate <- read.csv("wnaclim2.csv")
+```
+
+### Exercise 1.
+
+**Instructions:** The file *boston6k.csv* contains information on house prices in Boston by census tract, as well as various socio-economic and environmental factors. Use this to cluster the tracts by these factors (NOT by price), then examine the characteristics of the clusters, whether they show a difference in house price and if there is any spatial structure to the clusters. Use only the following variables in the cluster analysis: CRIM, ZN, INDUS, CHAS, NOX, RM, AGE, DIS, RAD, TAX, PTRATIO, B, LSTAT (see the file description for explanations of these). You will need to scale the data as the variables are in a wide range of units.
+
+a. Start by running k-means cluster analysis on the data from 2 to 20 clusters, using the approach outlined above. You should calculate either the silhouette index or the Calinski-Harabasz index for each set of clusters. Provide a plot of the index values, and identify the number of clusters (k) that gives the best solution.
+b. In your opinion, is this the best solution, or would more or less clusters be useful?
+
+```{r boston a, echo=TRUE}
+bostonloc <- cbind(boston$LON, boston$LAT)
+ngrp <- 7
+
+#vars to use
+boston_vars <- boston[, seq(9, 21)]
+boston_vars_s <- scale(boston_vars)
+
+boston_kmeans <- kmeans(boston_vars_s, ngrp, nstart = 50, iter.max = 20)
+table(boston_kmeans$cluster)
+
+mycol <- brewer.pal(ngrp, "Dark2")
+plot(bostonloc, xlab = '', ylab = '', bg = alpha(mycol[boston_kmeans$cluster], 0.6),pch = 21, cex = 1.25, col = "gray100", lwd = 0.4, main = "k = 7 (initial guess)")
+maps::map("usa", xlim = c(-72, -69), ylim = c(41.5, 43), col = "gray10", add = TRUE)
+
+sil.out <- silhouette(boston_kmeans$cluster, dist(boston_vars_s))
+sil.out[1:4, 1]
+mean(sil.out[, 3])
+tapply(sil.out[, 3], sil.out[, 1], mean)
+
+calinhara(boston_vars_s, boston_kmeans$cluster)
+
+ch.out <- rep(NA, 20)
+sil.out <- rep(NA, 20)
+for (i in 2:20) {
+  boston.kmeans <- kmeans(boston_vars_s, centers = i, nstart = 50)
+  ch.out[i] <- calinhara(boston_vars_s, boston.kmeans$cluster)
+  tmp <- silhouette(boston.kmeans$cluster, dist(boston_vars_s))
+  sil.out[i] <- mean(tmp[,3])
+}
+
+par(mfrow = c(1, 2))
+ch <- plot(1:20, ch.out, type = 'b', lwd = 2, xlab = "N Groups", ylab = "C", main = "CH")
+sil <- plot(1:20,sil.out, type = 'b', lwd = 2, xlab = "N Groups", ylab = "C", main = "Average silhouette index")
+mean(sil.out, na.rm = TRUE)
+
+```
+
+**Answer:** I initially tried running the k-means analysis with seven clusters, but I think fewer would be more appropriate. Our Calinski-Harabasz plot appears to "bend the elbow" at k=5. While a cluster of 2 maximizes the average silhouette index, two clusters probably don't capture all of the variability of Boston. The second-highest value is for k=12, but since this is much higher than the CH index seems to suggest, I would favor a lower k. Based on the plotted results of the Calinski-Harabasz index and silhouette index, I would select 5 as my k. The silhouette index is 0.2878, which is near the "elbow" without being too high. It is higher than the average silhouette value of 0.2832, if only slightly. &nbsp;
+
+(I like placing my plots side-by-side to minimize scrolling, but I think it's worth viewing separately when choosing k.)
+
+c. Re-run kmeans() using your chosen number for k.
+d. Using the aggregate() function, provide a table showing the median the variables used in clustering. In 1-2 sentences, describe the characteristics of the clusters
+
+```{r boston b}
+ngrp_final <- 5
+
+#vars to use
+boston_vars <- boston[, seq(9, 21)]
+boston_vars_s <- scale(boston_vars)
+
+boston_kmeans <- kmeans(boston_vars_s, ngrp_final, nstart = 50, iter.max = 20)
+table(boston_kmeans$cluster)
+
+mycol <- brewer.pal(ngrp, "Dark2")
+plot(bostonloc, xlab = '', ylab = '', bg = alpha(mycol[boston_kmeans$cluster], 0.6),pch = 21, cex = 1.25, col = "gray100", lwd = 0.4, main = "k = 5")
+maps::map("usa", xlim = c(-72, -69), ylim = c(41.5, 43), col = "gray10", add = TRUE)
+
+boston_meds <- aggregate(boston_vars, list(boston_kmeans$cluster), median)
+boston_meds
+```
+**Answer:** By far the cluster with the most crime per capita is cluster 2, which is fairly similar to cluster 5 — they are nearer to highways, have higher levels of nitric oxides, higher percent lowest status population, and the highest property tax rate.
+
+e. Report the mean corrected house value per cluster
+f. Use anova() to test whether the values are significantly different between clusters. You will need the vector of house prices/values and the vector of clusters from kmeans(). Give the F-statistic and the p-value
+
+```{r boston c}
+#Cluster vector
+boston$cluster <- boston_kmeans$cluster
+
+group_by(boston, cluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(CMEDV, na.rm = TRUE), 
+    sd = sd(CMEDV, na.rm = TRUE)
+  )
+
+summary(boston_aov <- aov(CMEDV ~ cluster, data = boston))
+
+```
+
+**Answer:** The mean home values (calculated from the median home values) are given above, with the highest value in cluster 1 at 28.987 (USD 1000), and the lowest in cluster 2 at 12.500 (USD 1000). The F-statistic is 40.35 (p = 4.74e-10), which means we have sufficient evidence to rejecting the null hypothesis and conclude that there is a statistically significant difference in home values between the clusters.
+
+### Exercise 2
+
+**Instructions:** The file *wnaclim2.csv* contains a set of climatic variables for sites distributed across western North America. Use principal component analysis to explore the spatial distribution of climate. This will require you to install the add-on package fields for plotting.
+
+a. Read in the file and perform principal component analysis using the monthly temperature and precipitation variables (these are the same as you used in the cluster analysis in the lab). Use the SVD approach with the function prcomp(). Note that you will have to use to scale the data in the PCA to avoid any bias from the difference in magnitude of the variables in the dataset (use the scale=TRUE parameter). Make a biplot of this ordination (biplot()) and a scree-plot showing the variance explained by the components (screeplot()).
+b. Give the total variance from the second PCA. Calculate the total percentage of variance explained by axes 1 and 2 (use summary())
+
+```{r climate a}
+climate <- read.csv("wnaclim2.csv")
+clim <- climate[, seq(3, 26)]
+clim <- scale(clim)
+
+var <- summary(clim.pca <- prcomp(clim, scale = TRUE))
+ax_1 <- var$importance[2, 1]
+ax_2 <- var$importance[2, 2]
+total <- sum(var$importance[2, ])
+exp_var_1_2 <- (ax_1 + ax_2)/total
+
+head(clim.pca$x)
+var <- clim.pca$sdev
+
+par(mfrow = c(1, 2))
+biplot(clim.pca)
+screeplot((clim.pca), main = "Climate PCA")
+
+```
+**Answer:** The total variance explained by the second PC is 0.32819, and the total percentage of variance explained by axes 1 and 2 is 82.73517%.
+
+c. Examine the ‘loadings’ of the variables on the first two axes (wnaclim.pca$rotation). Name two variables that are highly associated (high positive or negative values) with axis 1 and two that are highly associated with axis 2, and give their scores.
+
+```{r}
+loadings <- clim.pca$rotation
+```
+
+
+**Answer:** PC1 is most highly associated with February temperature (0.27524689) and December temperature (0.27301687), PC2 is highly associated with October precipitation (0.28759576).
+
+d. Produce a map of the sites scores on axis 1, using the quilt.plot() function from the fields package (code to do this is given with the file description below). With reference to the association between the variables and axis 1 (previous question), give a short description of the map (e.g. where do you find negative or positive values and what variables are these associated with?). Does this make sense in terms of what you know about the geography and climate of North America?
+e. Finally, produce a map of the sites scores on the second axis and give a short description of the spatial pattern in terms of the associated variables
+
+```{r trees}
+library(spam)
+library(fields)
+
+wnaclim.pca.score <- clim.pca$x[, 1]
+quilt.plot(climate$Longitude, climate$Latitude, wnaclim.pca.score)
+world(add = TRUE)
+
+wnaclim.pca.score <- clim.pca$x[, 2]
+quilt.plot(climate$Longitude, climate$Latitude, wnaclim.pca.score)
+world(add = TRUE)
+
+```
+&nbsp;
+
+**Answers:** The spatial pattern of PC1 in Map 1 appears to be closely associated with coastal geography, as well as latitude. The loadings for PC1 showed is that it is highly associated with temperature, but not as much precipitation. The temperature is less variable along the coast than it is inland of the contiguous U.S. — we would expect it to be more temperature on the coast. In Alaska, however, we know it can get extremely cold, especially further north. &nbsp;
+
+The spatial pattern of PC2 is more associated with variation in precipitation than temperature. We expect relatively frequent precipitation in coast Canada and the Pacific Northwest, whereas in the deserts of the Southwest showers are less frequent and more variable.

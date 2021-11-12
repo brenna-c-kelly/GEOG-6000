@@ -1,0 +1,146 @@
+---
+title: "Lab 6"
+author: "Brenna Kelly"
+date: "10/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(RColorBrewer)
+library(lme4)
+library(nlme)
+```
+
+### Exercise 1
+
+**Instructions:** The file *gapminderData5.csv* contains a subset of the GapMinder dataset for 142 countries over 12 time steps (every 5 years between 1952 and 2007).
+
+* Read the data in amd use the tapply() function to estimate the mean life expectancy by country (tapply(gap$lifeExp, gap$country, mean))
+
+```{r}
+gap <- read.csv("gapminderData5.csv")
+
+m_le <- tapply(gap$lifeExp, gap$country, mean)
+head(m_le)
+```
+
+* Make a scatter plot of lifeExp vs. year for all countries
+
+```{r scatterplot}
+
+plt_lifeExp_year <- ggplot(gap, aes(year, lifeExp, color=continent)) +
+  geom_point(alpha = 0.3, cex = 2) +
+  labs(y = "Life Expectancy (y)", x = "Year") +
+  ggtitle("Life Expectancy for All Countries by Year") +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  scale_colour_brewer(palette = "Set1")
+plt_lifeExp_year
+
+```
+
+* Here’s some example code to make a line plot of lifeExp vs. year for the United States. Use this to make plots for two countries.
+
+```{r}
+
+gap_subset <- gap[which(gap$country == "Montenegro" | gap$country == "Morocco"),]
+
+plt_line <- ggplot(gap_subset, aes(x = year, y = lifeExp,
+                       colour = country)) +
+  geom_line(size = 0.75) +
+  theme_bw() +
+  labs(x = "Year", y = "Life Expectancy (y)") +
+  ggtitle("Life Expectancy Comparison Between \nMontenegro and Morocco") +
+  scale_colour_brewer(palette = "Dark2")
+
+plt_line
+
+```
+
+* Use these data to build a simple linear model (lm()) of lifeExp as a function of year. Before making the model, center the year variable by subtracting 1952 from all values (0 now represents the year 1952)
+  + Report the coefficients, their significance and a brief explanation of what each one means
+  + Give the F-statistic and associated p-value
+  
+```{r lm}
+gap$year_c_s <- (gap$year - 1952) / 10
+
+summary(life_lm <- lm(lifeExp ~ year_c_s,
+               data = gap))
+```
+**Answer:** The intercept is 50.5121 (p<2e-16), meaning that in the year 1952 (t = 0), the expected value for life expectancy globally was 50.5 years or so. The coefficient estimate for `year` is 3.259 (p < 2e-16) — every decade after 1952, the life expectancy increased by about 3 years and 3 months. Our F-statistic is 398.6 (p < 2.2e-16).
+
+* Now build a random intercept model using the lme() function, using country as the grouping variable for the random effect (the random effect will look something like random = ~ 1 | country). Report:
+  + The fixed effect coefficients and associated p-values (see under Fixed effects in the summary() output)
+  + The reported standard deviation for the two random effects ((Intercept) and Residual)
+  
+```{r lme}
+summary(life_lme <- lme(lifeExp ~ year_c_s,
+                random = ~ 1 | country,
+                data = gap))
+```
+**Answer:** The fixed effect coefficients are: Intercept: 50.512 (p = 0), Year: 3.259 (p = 0). The standard deviations are 11.097 (Intercept) and 3.584 (Residual).
+
+* Calculate the ICC for the random intercept in this model. You will need to use VarCorr() to find the variance of the intercept and residual term (quick reminder, the intercept ICC is the variance of the intercept, divided by the sum of variances). Given the value you obtain, does this support the use of a random intercept model?
+
+```{r}
+icc <- VarCorr(life_lme)
+icc
+123.14688 + 12.84646 #Total Variance in the Model: 135.993
+123.14688 / 135.993 # Proportion of Variation Due to Slope (ICC): 0.9055
+12.84646 + 3.584196 # Residual Variation: 16.43
+
+```
+**Answer:** With an ICC of 90.55%, there is support for using the random intercept model.
+
+* Now build a third model with a random intercept and slope. The random effect will look something like random = ~ year2 | country. Show the output of summary() for this model.
+
+```{r random}
+summary(life_rand <- lme(lifeExp ~ year_c_s,
+                random = ~ year_c_s | country,
+                data = gap))
+```
+**Answer:** 
+
+* Finally, use the AIC() function to get the AIC for the three models (linear, random intercept and random intercept and slope). As a reminder: the AIC is a good criterion of the quality of the model, as it penalizes when extra predictors (overfitting). The models with the lowest AIC values are best. Which of your models is best?
+
+```{r AIC}
+AIC(life_lm, life_lme, life_rand)
+```
+**Answer:** With an AIC of 8742.672, the model with the best fit is the model with a random intercept and slope. This makes intuitive sense, since there was a lot of variation in life expectancy between countries in 1952 — we would expect the intercept to vary by country.
+
+While global average life expectancy increased, we would also expect countries to have different trends — for instance, the famine in Somalia caused life expectancy to drop around 1990, but at the same time the India saw a relatively steep increase in life expectancy. Zimbabwe had, on average, a decreased life expectancy of -3.97 years per decade — the lowest slope of the datasets. Oman had the highest increase in life expectancy overall, with a slope of 3.26.
+
+```{r plt}
+
+x <- data.frame(life_rand[["coefficients"]][["random"]][["country"]])
+max(x$year_c_s)
+min(x$year_c_s)
+
+max(life_lme[["coefficients"]][["fixed"]][["year_c_s"]])
+min(life_lme[["coefficients"]][["fixed"]][["year_c_s"]])
+
+gap_subset_2 <- gap[which(gap$country == "India" | gap$country == "Somalia"),]
+gap_subset_3 <- gap[which(gap$country == "Zimbabwe" | gap$country == "Oman"),]
+
+ggplot(gap_subset_2, aes(x = year, y = lifeExp,
+                       colour = country)) +
+  geom_line(size = 0.75) +
+  theme_bw() +
+  labs(x = "Year", y = "Life Expectancy (y)") +
+  ggtitle("Highs and Lows in 1992") +
+  scale_colour_brewer(palette = "Dark2") +
+  geom_vline(xintercept = c(1992, 1992), linetype = "dotted")
+ggplot(gap_subset_3, aes(x = year, y = lifeExp,
+                       colour = country)) +
+  geom_line(size = 0.75) +
+  theme_bw() +
+  labs(x = "Year", y = "Life Expectancy (y)") +
+  ggtitle("Lowest Slope vs. Highest Slope") +
+  scale_colour_brewer(palette = "Dark2") +
+  geom_vline(xintercept = c(1992, 1992), linetype = "dotted")
+
+```
+
